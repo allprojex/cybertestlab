@@ -1,0 +1,9 @@
+# CYBER TEST 360
+
+> CYBER TEST 360 — secure online assessment platform for qualified applicants.
+
+This site hosts the proctored online aptitude test for the CYBER TEST 360 assessment process.
+
+## Pages
+
+- [Home](/): Applicant entry — sign in with your name to begin the aptitude test.
