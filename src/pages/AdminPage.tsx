@@ -28,6 +28,11 @@ import { useBranding } from "@/hooks/useBranding";
 import { logLoginEvent } from "@/lib/loginLog";
 import cyberTestLogo from "@/assets/cybertest-360-logo.jpeg.asset.json";
 
+const adminIdentifierToEmail = (value: string) => {
+  const trimmed = value.trim();
+  return trimmed.includes("@") ? trimmed.toLowerCase() : `${trimmed.toLowerCase()}@admin.local`;
+};
+
 const AdminPage = () => {
   const navigate = useNavigate();
   const [session, setSession] = useState<any>(null);
@@ -57,12 +62,17 @@ const AdminPage = () => {
 
   const login = async () => {
     setLoginError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const authEmail = adminIdentifierToEmail(email);
+    if (!authEmail || !password) {
+      setLoginError("Enter your admin name or email and password.");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password });
     if (error) {
       setLoginError(error.message);
-      logLoginEvent("login_failed", email);
+      logLoginEvent("login_failed", authEmail);
     } else {
-      logLoginEvent("login_success", email);
+      logLoginEvent("login_success", authEmail);
     }
   };
   const logout = async () => {
@@ -89,9 +99,9 @@ const AdminPage = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Email</Label>
-              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && login()} placeholder="admin@example.com" />
+              <Label>Admin name or email</Label>
+              <Input value={email} onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && login()} placeholder="admin" autoComplete="username" />
             </div>
             <div className="space-y-2">
               <Label>Password</Label>
