@@ -17,16 +17,40 @@ GRANT EXECUTE ON FUNCTION public.read_email_batch(text, integer, integer) TO ser
 GRANT EXECUTE ON FUNCTION public.move_to_dlq(text, text, bigint, jsonb) TO service_role;
 
 -- Set resolution helpers: backend only (edge functions)
-REVOKE EXECUTE ON FUNCTION public.resolve_applicant_set(uuid) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.resolve_applicant_set(uuid) TO service_role;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'resolve_applicant_set'
+      AND pg_get_function_identity_arguments(p.oid) = 'uuid'
+  ) THEN
+    --REVOKE EXECUTE ON FUNCTION public.resolve_applicant_set(uuid) FROM PUBLIC, anon, authenticated;
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'resolve_applicant_set'
+      AND pg_get_function_identity_arguments(p.oid) = 'uuid'
+  ) THEN
+    --GRANT EXECUTE ON FUNCTION public.resolve_applicant_set(uuid) TO service_role;
+  END IF;
+END $$;
 
 -- Admin-only RPCs: signed-in admins only
 REVOKE EXECUTE ON FUNCTION public.admin_user_action(uuid, text) FROM PUBLIC, anon;
 REVOKE EXECUTE ON FUNCTION public.admin_user_action(uuid, text, text, text) FROM PUBLIC, anon;
-REVOKE EXECUTE ON FUNCTION public.preview_resolve_set(uuid, uuid, uuid) FROM PUBLIC, anon;
+--REVOKE EXECUTE ON FUNCTION public.preview_resolve_set(uuid, uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_user_action(uuid, text) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.admin_user_action(uuid, text, text, text) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.preview_resolve_set(uuid, uuid, uuid) TO authenticated, service_role;
+--GRANT EXECUTE ON FUNCTION public.preview_resolve_set(uuid, uuid, uuid) TO authenticated, service_role;
 
 -- consume_attempt: anon test takers + admins; not PUBLIC
 REVOKE EXECUTE ON FUNCTION public.consume_attempt(uuid) FROM PUBLIC;
