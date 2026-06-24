@@ -4,20 +4,24 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Clock, ChevronLeft, ChevronRight, Send, Camera, AlertTriangle, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react";
 import { usePresence } from "@/hooks/usePresence";
-
-interface PublicQuestion {
-  id: string;
-  question_text: string;
-  question_type: string;
-  options: string[] | null;
-  created_at: string;
-}
+import {
+  answerAsArray,
+  answerAsString,
+  buildSubmissionAnswers,
+  getQuestionTypeLabel,
+  isMultiChoiceQuestion,
+  toggleAnswerOption,
+  type AnswerMap,
+  type PublicQuestion,
+} from "@/lib/questionTypes";
 
 const TOTAL_TIME = 20 * 60;
 const PROCTOR_TTL_MS = 15 * 60 * 1000;
@@ -95,7 +99,7 @@ const TestPage = () => {
   const [questions, setQuestions] = useState<PublicQuestion[]>([]);
   const [, setSetId] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<AnswerMap>({});
   const [timeLeft, setTimeLeft] = useState(TOTAL_TIME);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -108,7 +112,7 @@ const TestPage = () => {
       if (raw) {
         const saved = JSON.parse(raw) as {
           currentIndex?: number;
-          answers?: Record<string, string>;
+          answers?: AnswerMap;
           timeLeft?: number;
         };
         if (typeof saved.currentIndex === "number") setCurrentIndex(saved.currentIndex);
@@ -229,10 +233,7 @@ const TestPage = () => {
     if (submitting) return;
     setSubmitting(true);
 
-    const answerPayload = questions.map((q) => ({
-      question_id: q.id,
-      user_answer: answers[q.id] || "",
-    }));
+    const answerPayload = buildSubmissionAnswers(questions, answers);
 
     try {
       const { data, error } = await supabase.functions.invoke("submit-test", {
@@ -303,6 +304,13 @@ const TestPage = () => {
       replace: false,
       state: { name, email, gender, reverify: true, returnTo: "/test" },
     });
+  const setTextAnswer = (questionId: string, value: string) =>
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+  const setMultiAnswer = (questionId: string, option: string, checked: boolean) =>
+    setAnswers((prev) => ({
+      ...prev,
+      [questionId]: toggleAnswerOption(prev[questionId], option, checked),
+    }));
 
 
   return (
@@ -405,31 +413,60 @@ const TestPage = () => {
         <Card className="border-primary/20">
           <CardHeader>
             <CardTitle className="text-lg leading-relaxed">{question.question_text}</CardTitle>
-            <span className="text-xs text-muted-foreground capitalize">{question.question_type.replace("_", "/")}</span>
+            <span className="text-xs text-muted-foreground">{getQuestionTypeLabel(question.question_type)}</span>
           </CardHeader>
           <CardContent>
-            {question.question_type === "mcq" && question.options && (
-              <RadioGroup value={answers[question.id] || ""} onValueChange={(val) => setAnswers((prev) => ({ ...prev, [question.id]: val }))} className="space-y-3">
+            {(question.question_type === "mcq" || question.question_type === "single_choice") && question.options && (
+              <RadioGroup value={answerAsString(answers[question.id])} onValueChange={(val) => setTextAnswer(question.id, val)} className="space-y-3">
                 {(question.options as string[]).map((opt, i) => (
                   <div key={i} className="flex items-center space-x-3 rounded-lg border border-primary/10 p-3 hover:bg-primary/5 transition-colors">
-                    <RadioGroupItem value={opt} id={`opt-${i}`} />
-                    <Label htmlFor={`opt-${i}`} className="cursor-pointer flex-1">{opt}</Label>
+                    <RadioGroupItem value={opt} id={`${question.id}-opt-${i}`} />
+                    <Label htmlFor={`${question.id}-opt-${i}`} className="cursor-pointer flex-1">{opt}</Label>
                   </div>
                 ))}
               </RadioGroup>
             )}
+            {question.question_type === "multi_choice" && question.options && (
+              <div className="space-y-3">
+                {(question.options as string[]).map((opt, i) => {
+                  const checked = answerAsArray(answers[question.id]).includes(opt);
+                  return (
+                    <div key={i} className="flex items-center space-x-3 rounded-lg border border-primary/10 p-3 hover:bg-primary/5 transition-colors">
+                      <Checkbox
+                        id={`${question.id}-multi-${i}`}
+                        checked={checked}
+                        onCheckedChange={(value) => setMultiAnswer(question.id, opt, value === true)}
+                      />
+                      <Label htmlFor={`${question.id}-multi-${i}`} className="cursor-pointer flex-1">{opt}</Label>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {question.question_type === "true_false" && (
-              <RadioGroup value={answers[question.id] || ""} onValueChange={(val) => setAnswers((prev) => ({ ...prev, [question.id]: val }))} className="space-y-3">
-                {["true", "false"].map((val) => (
+              <RadioGroup value={answerAsString(answers[question.id])} onValueChange={(val) => setTextAnswer(question.id, val)} className="space-y-3">
+                {["True", "False"].map((val) => (
                   <div key={val} className="flex items-center space-x-3 rounded-lg border border-primary/10 p-3 hover:bg-primary/5 transition-colors">
-                    <RadioGroupItem value={val} id={`tf-${val}`} />
-                    <Label htmlFor={`tf-${val}`} className="cursor-pointer flex-1 capitalize">{val}</Label>
+                    <RadioGroupItem value={val} id={`${question.id}-tf-${val}`} />
+                    <Label htmlFor={`${question.id}-tf-${val}`} className="cursor-pointer flex-1">{val}</Label>
                   </div>
                 ))}
               </RadioGroup>
             )}
             {question.question_type === "short_answer" && (
-              <Input placeholder="Type your answer..." value={answers[question.id] || ""} onChange={(e) => setAnswers((prev) => ({ ...prev, [question.id]: e.target.value }))} className="border-primary/20 focus-visible:ring-primary" />
+              <Input placeholder="Type your answer..." value={answerAsString(answers[question.id])} onChange={(e) => setTextAnswer(question.id, e.target.value)} className="border-primary/20 focus-visible:ring-primary" />
+            )}
+            {question.question_type === "open" && (
+              <Textarea
+                rows={6}
+                placeholder="Write your response..."
+                value={answerAsString(answers[question.id])}
+                onChange={(e) => setTextAnswer(question.id, e.target.value)}
+                className="border-primary/20 focus-visible:ring-primary"
+              />
+            )}
+            {isMultiChoiceQuestion(question.question_type) && (
+              <p className="mt-3 text-xs text-muted-foreground">Select every option that applies.</p>
             )}
           </CardContent>
         </Card>

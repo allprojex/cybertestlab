@@ -2,6 +2,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.23.8";
 
 const ALLOWED_ORIGINS = [
+  "https://infinitydatalink.com",
+  "https://www.infinitydatalink.com",
   "https://pretestlab.lovable.app",
   "https://cybertestlab.lovable.app",
   "http://localhost:8080",
@@ -32,6 +34,14 @@ const BodySchema = z.object({
   gender: z.enum(["male", "female", "other", "prefer_not_to_say"]),
 });
 
+interface ShareLinkWithSet {
+  enabled: boolean;
+  expires_at: string | null;
+  max_uses: number | null;
+  uses_count: number;
+  question_sets: { active: boolean } | null;
+}
+
 Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -61,7 +71,7 @@ Deno.serve(async (req) => {
     .eq("token", token)
     .maybeSingle();
 
-  const set = (link as any)?.question_sets;
+  const set = (link as ShareLinkWithSet | null)?.question_sets;
   if (!link || !link.enabled || !set?.active) {
     return new Response(JSON.stringify({ ok: false, reason: "not_available" }),
       { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } });

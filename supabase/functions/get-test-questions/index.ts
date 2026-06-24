@@ -2,6 +2,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.23.8";
 
 const ALLOWED_ORIGINS = [
+  "https://infinitydatalink.com",
+  "https://www.infinitydatalink.com",
   "https://pretestlab.lovable.app",
   "http://localhost:8080",
   "http://localhost:5173",
@@ -34,6 +36,23 @@ interface PublicQuestion {
   question_type: string;
   options: string[] | null;
   created_at: string;
+}
+
+interface QuestionSetItem {
+  questions: (PublicQuestion & {
+    published: boolean;
+    approval_status: string;
+    deleted_at: string | null;
+  }) | null;
+}
+
+function isPublishedQuestion(question: QuestionSetItem["questions"]): question is NonNullable<QuestionSetItem["questions"]> {
+  return Boolean(
+    question &&
+      question.published === true &&
+      question.approval_status === "approved" &&
+      question.deleted_at == null,
+  );
 }
 
 Deno.serve(async (req) => {
@@ -84,16 +103,16 @@ Deno.serve(async (req) => {
     if (setId) {
       const { data: items, error } = await supabase
         .from("question_set_items")
-        .select("sort_order, questions:question_id(id, question_text, question_type, options, published, approval_status, created_at)")
+        .select("sort_order, questions:question_id(id, question_text, question_type, options, published, approval_status, deleted_at, created_at)")
         .eq("set_id", setId)
         .order("sort_order");
       if (error) {
         console.error("set_items_error", { code: error.code });
       } else if (items) {
-        questions = items
-          .map((it: any) => it.questions)
-          .filter((q: any) => q && q.published === true && q.approval_status === "approved")
-          .map((q: any) => ({
+        questions = (items as QuestionSetItem[])
+          .map((it) => it.questions)
+          .filter(isPublishedQuestion)
+          .map((q) => ({
             id: q.id,
             question_text: q.question_text,
             question_type: q.question_type,

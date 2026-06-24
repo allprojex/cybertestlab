@@ -1,7 +1,15 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.23.8";
+import {
+  calculatePassed,
+  gradeSubmission,
+  type GradingQuestion,
+  type SubmittedAnswer,
+} from "../_shared/question-grading.ts";
 
 const ALLOWED_ORIGINS = [
+  "https://infinitydatalink.com",
+  "https://www.infinitydatalink.com",
   "https://pretestlab.lovable.app",
   "https://id-preview--ac369ed3-68f9-4a68-807d-d464a9338b92.lovable.app",
   "http://localhost:8080",
@@ -30,7 +38,13 @@ const SubmitSchema = z.object({
     .array(
       z.object({
         question_id: z.string().uuid(),
-        user_answer: z.string().max(2000).optional().default(""),
+        user_answer: z
+          .union([
+            z.string().max(2000),
+            z.array(z.string().max(2000)).max(100),
+          ])
+          .optional()
+          .default(""),
       })
     )
     .max(500),
@@ -38,6 +52,35 @@ const SubmitSchema = z.object({
 
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const MAX_SUBMISSIONS_PER_WINDOW = 5;
+
+type QuestionWithState = GradingQuestion & {
+  published: boolean;
+  approval_status: string;
+  deleted_at: string | null;
+};
+
+interface QuestionSetItem {
+  questions: QuestionWithState | null;
+}
+
+function isActiveQuestion(question: QuestionWithState | null): question is QuestionWithState {
+  return Boolean(
+    question &&
+      question.published === true &&
+      question.approval_status === "approved" &&
+      question.deleted_at == null,
+  );
+}
+
+function toGradingQuestion(question: GradingQuestion): GradingQuestion {
+  return {
+    id: question.id,
+    question_text: question.question_text,
+    question_type: question.question_type,
+    correct_answer: question.correct_answer ?? null,
+    correct_answers: question.correct_answers ?? null,
+  };
+}
 
 async function hashToken(token: string): Promise<string> {
   const bytes = new TextEncoder().encode(token);
@@ -126,26 +169,19 @@ Deno.serve(async (req) => {
       if (rpc) setId = rpc as unknown as string;
     }
 
-    let questions:
-      | Array<{ id: string; question_text: string; question_type: string; correct_answer: string }>
-      | null = null;
+    let questions: GradingQuestion[] | null = null;
 
     if (setId) {
       const { data: items } = await supabase
         .from("question_set_items")
-        .select("question_id, sort_order, questions:question_id(id, question_text, question_type, correct_answer, published, approval_status)")
+        .select("question_id, sort_order, questions:question_id(id, question_text, question_type, correct_answer, correct_answers, published, approval_status, deleted_at)")
         .eq("set_id", setId)
         .order("sort_order");
       if (items) {
-        questions = items
-          .map((it: any) => it.questions)
-          .filter((q: any) => q && q.published === true && q.approval_status === "approved")
-          .map((q: any) => ({
-            id: q.id,
-            question_text: q.question_text,
-            question_type: q.question_type,
-            correct_answer: q.correct_answer,
-          }));
+        questions = (items as QuestionSetItem[])
+          .map((it) => it.questions)
+          .filter(isActiveQuestion)
+          .map(toGradingQuestion);
       }
     }
 
@@ -153,9 +189,10 @@ Deno.serve(async (req) => {
       setId = null;
       const { data: all, error: qError } = await supabase
         .from("questions")
-        .select("id, question_text, question_type, correct_answer")
+        .select("id, question_text, question_type, correct_answer, correct_answers")
         .eq("published", true)
-        .eq("approval_status", "approved");
+        .eq("approval_status", "approved")
+        .is("deleted_at", null);
       if (qError || !all || all.length === 0) {
         console.error("fetch_questions_error", { code: qError?.code });
         return new Response(
@@ -163,26 +200,17 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      questions = all;
+      questions = ((all ?? []) as GradingQuestion[]).map(toGradingQuestion);
     }
 
-    const gradedAnswers = questions.map((q) => {
-      const userEntry = answers.find((a) => a.question_id === q.id);
-      const userAnswer = (userEntry?.user_answer || "").trim().toLowerCase();
-      const correctAnswer = q.correct_answer.trim().toLowerCase();
-      return {
-        question_id: q.id,
-        question_text: q.question_text,
-        question_type: q.question_type,
-        correct_answer: q.correct_answer,
-        user_answer: userEntry?.user_answer || "",
-        is_correct: userAnswer === correctAnswer,
-      };
-    });
-
-    const score = gradedAnswers.filter((a) => a.is_correct).length;
-    const totalQuestions = questions.length;
-    const percentage = Math.round((score / totalQuestions) * 100 * 100) / 100;
+    const { gradedAnswers, score, totalQuestions, percentage } = gradeSubmission(
+      questions,
+      answers as SubmittedAnswer[],
+    );
+    const { data: settings } = await supabase
+      .from("app_settings").select("pass_mark").eq("id", 1).maybeSingle();
+    const passMark = Number(settings?.pass_mark ?? 65);
+    const passed = calculatePassed(percentage, passMark);
 
     const accessToken = generateToken();
     const accessTokenHash = await hashToken(accessToken);
@@ -195,6 +223,7 @@ Deno.serve(async (req) => {
         score,
         total_questions: totalQuestions,
         percentage,
+        passed,
         answers: gradedAnswers,
         access_token_hash: accessTokenHash,
         applicant_gender: applicant_gender || null,
@@ -215,11 +244,6 @@ Deno.serve(async (req) => {
     // failures here must not break the applicant flow.
     if (applicantId) {
       try {
-        const { data: settings } = await supabase
-          .from("app_settings").select("pass_mark").eq("id", 1).maybeSingle();
-        const passMark = Number(settings?.pass_mark ?? 65);
-        const passed = percentage >= passMark;
-
         const { count: priorCount } = await supabase
           .from("test_attempts")
           .select("id", { count: "exact", head: true })

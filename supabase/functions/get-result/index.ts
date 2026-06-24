@@ -2,6 +2,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://esm.sh/zod@3.23.8";
 
 const ALLOWED_ORIGINS = [
+  "https://infinitydatalink.com",
+  "https://www.infinitydatalink.com",
   "https://pretestlab.lovable.app",
   "https://id-preview--ac369ed3-68f9-4a68-807d-d464a9338b92.lovable.app",
   "http://localhost:8080",
@@ -71,7 +73,7 @@ Deno.serve(async (req) => {
 
     const { data: row, error } = await supabase
       .from("test_results")
-      .select("id, applicant_name, score, total_questions, percentage, answers, completed_at, access_token_hash")
+      .select("id, applicant_name, score, total_questions, percentage, passed, answers, completed_at, access_token_hash")
       .eq("id", parsed.data.result_id)
       .maybeSingle();
 

@@ -788,7 +788,7 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           category_id: string | null
-          correct_answer: string
+          correct_answer: string | null
           correct_answers: string[] | null
           created_at: string
           deleted_at: string | null
@@ -807,7 +807,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           category_id?: string | null
-          correct_answer: string
+          correct_answer?: string | null
           correct_answers?: string[] | null
           created_at?: string
           deleted_at?: string | null
@@ -826,7 +826,7 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           category_id?: string | null
-          correct_answer?: string
+          correct_answer?: string | null
           correct_answers?: string[] | null
           created_at?: string
           deleted_at?: string | null
@@ -957,6 +957,7 @@ export type Database = {
           applicant_name: string
           completed_at: string
           id: string
+          passed: boolean | null
           percentage: number
           score: number
           total_questions: number
@@ -969,6 +970,7 @@ export type Database = {
           applicant_name: string
           completed_at?: string
           id?: string
+          passed?: boolean | null
           percentage: number
           score: number
           total_questions: number
@@ -981,6 +983,7 @@ export type Database = {
           applicant_name?: string
           completed_at?: string
           id?: string
+          passed?: boolean | null
           percentage?: number
           score?: number
           total_questions?: number

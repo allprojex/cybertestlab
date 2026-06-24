@@ -27,13 +27,15 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { parseCsv, toCsv, downloadCsv, type CsvRow } from "@/lib/csv";
 import { parseXlsx } from "@/lib/xlsx";
+import { QUESTION_TYPE_LABELS, SUPPORTED_QUESTION_TYPES, type QuestionType } from "@/lib/questionTypes";
+import type { Database } from "@/integrations/supabase/types";
 import { CategoriesTab } from "./questions/CategoriesTab";
 import { OrganizationsTab } from "./questions/OrganizationsTab";
 import { DepartmentsTab } from "./questions/DepartmentsTab";
 import { AssignmentsTab } from "./questions/AssignmentsTab";
 import { QuestionSetsTab } from "./questions/QuestionSetsTab";
 
-type QType = "mcq" | "true_false" | "short_answer" | "single_choice" | "multi_choice";
+type QType = QuestionType;
 type Difficulty = "easy" | "medium" | "hard";
 type Approval = "draft" | "pending" | "approved" | "rejected";
 type AdminQuestion = {
@@ -41,7 +43,7 @@ type AdminQuestion = {
   question_text: string;
   question_type: QType;
   options: string[] | null;
-  correct_answer: string;
+  correct_answer: string | null;
   correct_answers: string[] | null;
   sort_order: number;
   published: boolean;
@@ -51,15 +53,11 @@ type AdminQuestion = {
   created_at: string;
 };
 type Category = { id: string; name: string };
+type QuestionInsert = Database["public"]["Tables"]["questions"]["Insert"];
+type QuestionUpdate = Database["public"]["Tables"]["questions"]["Update"];
 
-const TYPE_LABEL: Record<QType, string> = {
-  mcq: "Multiple Choice",
-  single_choice: "Single Choice",
-  multi_choice: "Multi-Select",
-  true_false: "True / False",
-  short_answer: "Short Answer",
-};
-const VALID_TYPES: QType[] = ["mcq", "single_choice", "multi_choice", "true_false", "short_answer"];
+const TYPE_LABEL = QUESTION_TYPE_LABELS;
+const VALID_TYPES: QType[] = [...SUPPORTED_QUESTION_TYPES];
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 const APPROVAL_LABEL: Record<Approval, string> = {
   draft: "Draft", pending: "Pending", approved: "Approved", rejected: "Rejected",
@@ -77,7 +75,7 @@ function approvalBadge(status: Approval) {
 }
 
 function validateRow(row: CsvRow, i: number, categoryByName: Map<string, string>):
-  { ok: true; payload: any } | { ok: false; error: string } {
+  { ok: true; payload: QuestionInsert } | { ok: false; error: string } {
   const text = (row.question_text || "").trim();
   const typeRaw = (row.question_type || "short_answer").trim() as QType;
   if (!text) return { ok: false, error: `Row ${i + 2}: question_text is required.` };
@@ -117,7 +115,7 @@ function validateRow(row: CsvRow, i: number, categoryByName: Map<string, string>
     }
   } else if (typeRaw === "true_false") {
     if (!["True", "False"].includes(answer)) return { ok: false, error: `Row ${i + 2}: true/false answer must be "True" or "False".` };
-  } else {
+  } else if (typeRaw === "short_answer") {
     if (!answer) return { ok: false, error: `Row ${i + 2}: correct_answer is required.` };
   }
 
@@ -147,7 +145,7 @@ function validateRow(row: CsvRow, i: number, categoryByName: Map<string, string>
       question_text: text,
       question_type: typeRaw,
       options,
-      correct_answer: typeRaw === "multi_choice" ? (correctAnswers?.[0] ?? "") : answer,
+      correct_answer: typeRaw === "multi_choice" ? (correctAnswers?.[0] ?? "") : (typeRaw === "open" && !answer ? null : answer),
       correct_answers: correctAnswers,
       category_id,
       difficulty: difficultyRaw,
@@ -237,7 +235,7 @@ function QuestionsList() {
     setEditing(q);
     setFormText(q.question_text); setFormType(q.question_type);
     setFormOptions(q.options ? [...q.options, ...Array(4).fill("")].slice(0, Math.max(4, q.options.length)) : ["", "", "", ""]);
-    setFormCorrect(q.correct_answer);
+    setFormCorrect(q.correct_answer ?? "");
     setFormCorrectMulti(q.correct_answers ?? []);
     setFormPublished(q.published);
     setFormDifficulty(q.difficulty);
@@ -266,16 +264,16 @@ function QuestionsList() {
       }
     } else if (formType === "true_false") {
       if (!["True", "False"].includes(answer)) return toast.error("Answer must be True or False.");
-    } else {
+    } else if (formType === "short_answer") {
       if (!answer) return toast.error("Answer is required.");
     }
 
     setSaving(true);
-    const payload: any = {
+    const payload: QuestionInsert = {
       question_text: text,
       question_type: formType,
       options: opts,
-      correct_answer: answer,
+      correct_answer: formType === "open" && !answer ? null : answer,
       correct_answers: answers,
       published: formPublished,
       difficulty: formDifficulty,
@@ -314,7 +312,7 @@ function QuestionsList() {
   };
 
   const setApproval = async (q: AdminQuestion, status: Approval, reason?: string) => {
-    const patch: any = { approval_status: status };
+    const patch: QuestionUpdate = { approval_status: status };
     if (status === "approved") {
       const { data: u } = await supabase.auth.getUser();
       patch.approved_by = u.user?.id ?? null;
@@ -335,7 +333,7 @@ function QuestionsList() {
     const b = list[index + direction];
     if (!a || !b) return;
     setReorderingId(a.id);
-    let orderA = a.sort_order;
+    const orderA = a.sort_order;
     let orderB = b.sort_order;
     if (orderA === orderB) orderB = orderA + direction * 5;
     const { error: e1 } = await supabase.from("questions").update({ sort_order: orderB }).eq("id", a.id);
@@ -352,7 +350,12 @@ function QuestionsList() {
     else setSelected(new Set());
   };
   const toggleSelect = (id: string, checked: boolean) => {
-    setSelected((s) => { const n = new Set(s); checked ? n.add(id) : n.delete(id); return n; });
+    setSelected((s) => {
+      const n = new Set(s);
+      if (checked) n.add(id);
+      else n.delete(id);
+      return n;
+    });
   };
   const clearSelection = () => setSelected(new Set());
 
@@ -367,7 +370,7 @@ function QuestionsList() {
   const bulkSetApproval = async (status: Approval) => {
     if (selected.size === 0) return;
     const ids = Array.from(selected);
-    const patch: any = { approval_status: status };
+    const patch: QuestionUpdate = { approval_status: status };
     if (status === "approved") {
       const { data: u } = await supabase.auth.getUser();
       patch.approved_by = u.user?.id ?? null;
@@ -397,7 +400,7 @@ function QuestionsList() {
       question_text: q.question_text,
       question_type: q.question_type,
       options: q.options ? q.options.join("|") : "",
-      correct_answer: q.correct_answer,
+      correct_answer: q.correct_answer ?? "",
       correct_answers: q.correct_answers ? q.correct_answers.join("|") : "",
       category: q.category_id ? (catMap.get(q.category_id) ?? "") : "",
       difficulty: q.difficulty,
@@ -415,6 +418,7 @@ function QuestionsList() {
         { question_text: "Select all prime numbers.", question_type: "multi_choice", options: "2|3|4|5", correct_answer: "", correct_answers: "2|3|5", category: "", difficulty: "medium", approval_status: "draft", published: "true", sort_order: "20" },
         { question_text: "The earth is flat.", question_type: "true_false", options: "", correct_answer: "False", correct_answers: "", category: "", difficulty: "easy", approval_status: "approved", published: "true", sort_order: "30" },
         { question_text: "Define cybersecurity.", question_type: "short_answer", options: "", correct_answer: "Protecting systems, networks and data.", correct_answers: "", category: "", difficulty: "medium", approval_status: "draft", published: "true", sort_order: "40" },
+        { question_text: "Explain one safe password practice.", question_type: "open", options: "", correct_answer: "", correct_answers: "", category: "", difficulty: "medium", approval_status: "draft", published: "true", sort_order: "50" },
       ],
       CSV_HEADERS,
     );
@@ -425,7 +429,7 @@ function QuestionsList() {
     if (rows.length === 0) { toast.error("File is empty."); return; }
     const missing = ["question_text", "question_type"].filter((h) => !(h in rows[0]));
     if (missing.length) { toast.error(`Missing columns: ${missing.join(", ")}.`); return; }
-    const payloads: any[] = [];
+    const payloads: QuestionInsert[] = [];
     for (let i = 0; i < rows.length; i++) {
       const res = validateRow(rows[i], i, catByName);
       if ("error" in res) { toast.error(res.error); return; }
@@ -446,8 +450,8 @@ function QuestionsList() {
       const isXlsx = /\.(xlsx|xls)$/i.test(file.name);
       const rows = isXlsx ? await parseXlsx(file) : parseCsv(await file.text());
       await handleRows(rows);
-    } catch (e: any) {
-      toast.error(e?.message ?? "Failed to import file.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to import file.");
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -459,8 +463,8 @@ function QuestionsList() {
     const show = revealAll || revealed[q.id];
     const answer = q.question_type === "multi_choice" && q.correct_answers?.length
       ? q.correct_answers.join(", ")
-      : q.correct_answer;
-    if (show) return answer;
+      : (q.correct_answer ?? "");
+    if (show) return answer || "No answer key";
     return "•".repeat(Math.min(12, Math.max(6, answer.length || 6)));
   };
 
@@ -516,6 +520,7 @@ function QuestionsList() {
                     <Select value={formType} onValueChange={(v) => setFormType(v as QType)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="open">Open Response</SelectItem>
                         <SelectItem value="single_choice">Single Choice</SelectItem>
                         <SelectItem value="multi_choice">Multi-Select</SelectItem>
                         <SelectItem value="mcq">Multiple Choice (legacy)</SelectItem>
@@ -590,9 +595,12 @@ function QuestionsList() {
                 )}
 
                 <div className="space-y-1.5">
-                  <Label className="flex items-center gap-1.5"><Lock className="h-3.5 w-3.5" /> Correct answer (admin-only)</Label>
-                  {formType === "short_answer" ? (
-                    <Textarea rows={4} value={formCorrect} onChange={(e) => setFormCorrect(e.target.value)} placeholder="Model answer" />
+                  <Label className="flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5" />
+                    {formType === "open" ? "Model answer / rubric (optional)" : "Correct answer (admin-only)"}
+                  </Label>
+                  {formType === "short_answer" || formType === "open" ? (
+                    <Textarea rows={4} value={formCorrect} onChange={(e) => setFormCorrect(e.target.value)} placeholder={formType === "open" ? "Optional review notes or exact-match answer" : "Model answer"} />
                   ) : formType === "true_false" ? (
                     <Select value={formCorrect} onValueChange={setFormCorrect}>
                       <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
@@ -760,7 +768,7 @@ function QuestionsList() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        CSV / Excel columns: <code>question_text</code>, <code>question_type</code> (single_choice | multi_choice | mcq | true_false | short_answer),
+        CSV / Excel columns: <code>question_text</code>, <code>question_type</code> (open | single_choice | multi_choice | mcq | true_false | short_answer),
         <code> options</code> (pipe-separated), <code>correct_answer</code>, <code>correct_answers</code> (multi-select, pipe-separated),
         <code> category</code>, <code>difficulty</code>, <code>approval_status</code>, <code>published</code>, <code>sort_order</code>.
       </p>
